@@ -1,106 +1,93 @@
-import SwiftUI
+//
+//  correct.swift
+//  ASLQuiz
+//
+//  Created by Carson Lee on 2024-03-11.
+//
+
+import Foundation
 import AVFoundation
-import Combine
+import SwiftUI
 
 struct GestureRecognitionGameView: View {
-    @StateObject var cameraManager = CameraManager()
+    @Environment(\.presentationMode) var presentationMode
+    @ObservedObject var cameraManager: CameraManager
     @ObservedObject var viewModel: AppViewModel
-    @State private var score = 0
+    let letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    @State private var currentLetter = ""
     @State private var timeRemaining = 10
-    @State private var scoreIncrementTime = Int.random(in: 6...7) // New variable for random score increment time
-    @State private var gameTimer: Timer.TimerPublisher = Timer.publish(every: 1, on: .main, in: .common)
-    @State private var gameTimerCancellable: Cancellable?
-    @State private var showCorrectMessage = false // For displaying "Correct!" feedback
+    @State private var timer: Timer?
+
+    func startGame() {
+        pickRandomLetter()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            if timeRemaining > 0 {
+                timeRemaining -= 1
+            } else {
+                endGame(success: false)
+            }
+        }
+    }
+
+    func pickRandomLetter() {
+        currentLetter = String(letters.randomElement()!)
+        timeRemaining = 10 // Reset timer for the new letter
+    }
+
+    func endGame(success: Bool) {
+        timer?.invalidate()
+        timer = nil
+        if success {
+            viewModel.score += 1
+            pickRandomLetter() // Start again with a new letter
+            startGame()
+        } else {
+            viewModel.currentScreen = .gestureScore // Redirect to GestureScoreView
+        }
+    }
 
     var body: some View {
-        ZStack { // Overlay text directly on the camera view
-            CameraPreview(session: cameraManager.session ?? AVCaptureSession())
-                .edgesIgnoringSafeArea(.all)
-
-            VStack {
-                Spacer().frame(height: 50) // Adjust the height here to move the overlay up
-
-                // Align "Letter" and "Time"
-                HStack {
-                    Text("Letter: \(cameraManager.currentLetter)")
-                        .font(.largeTitle)
+        ZStack {
+            if let session = cameraManager.session {
+                CameraPreview(session: session)
+                    .edgesIgnoringSafeArea(.all)
+            } else {
+                Text("Loading")
+                    .foregroundColor(.green)
+            }
+            
+            if cameraManager.isCameraRunning { // Only display when the camera is running
+                VStack(spacing: 20) { // Adjusted spacing for visual clarity
+                    Text("Perform the ASL gesture for: \(currentLetter)")
+                        .font(.title2)
                         .foregroundColor(.white)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Text("Time: \(timeRemaining)s") // This will align with the "Letter" text
+                    
+                    Text("Time: \(timeRemaining)s")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    
+                    // Move Score text here, under the "Perform the ASL gesture for:" text
+                    Text("Score: \(viewModel.score)")
                         .font(.title)
                         .foregroundColor(.white)
-                        .fontWeight(.semibold)
+                        .fontWeight(.bold)
+                    
+                    Spacer()
                 }
-                .padding(.horizontal)
-
-                Spacer().frame(height: 10) // Additional spacer to further adjust layout
-
-                // Score at the top center
-                Text("Score: \(score)")
-                    .font(.title)
-                    .foregroundColor(.white)
-                    .fontWeight(.semibold)
-                    .position(x: UIScreen.main.bounds.width / 2, y: 25) // Adjust position to be at the top center
-                
-                Spacer()
-            }
-
-            if showCorrectMessage {
-                Text("Correct!")
-                    .font(.largeTitle)
-                    .foregroundColor(.green)
-                    .transition(.opacity)
-                    .fontWeight(.bold)
-                    .position(x: UIScreen.main.bounds.width / 2, y: UIScreen.main.bounds.height / 2)
-            }
-        }
-        .onReceive(gameTimer) { _ in
-            if self.timeRemaining > 0 {
-                self.timeRemaining -= 1
-            } else if self.score >= 5 {
-                // Update the viewModel.score with the final score before navigation
-                viewModel.score = self.score
-                viewModel.currentScreen = .gestureScore
-                gameTimerCancellable?.cancel() // Stop the timer to prevent further updates
+                .padding(.top, 50) // Adjust this padding as needed to position the VStack appropriately on the screen
             } else {
-                self.showCorrectAndNextLetter()
-            }
-
-            if self.timeRemaining == scoreIncrementTime && self.score < 5 {
-                self.score += 1
-                self.showCorrectMessage = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    self.showCorrectMessage = false
-                    self.nextLetter() // Reset the timer back to 10 seconds
-                    self.scoreIncrementTime = Int.random(in: 6...7) // Randomize next score increment time
-                }
+                Text("Loading")
+                    .foregroundColor(.green)
             }
         }
-
         .onAppear {
+            print("Attempting to setup camera...")
             cameraManager.setupCamera()
-            nextLetter()
-            gameTimerCancellable = gameTimer.connect()
+            startGame()
+            print("Camera setup should be complete.")
         }
         .onDisappear {
             cameraManager.stopCamera()
-            gameTimerCancellable?.cancel()
-        }
-    }
-
-    func nextLetter() {
-        let letters = "ABLVWUS"
-        cameraManager.currentLetter = "\(letters.randomElement()!)" // Ensure it's a letter
-        timeRemaining = 10 // Resets the timer back to 10
-        showCorrectMessage = false
-    }
-    
-    func showCorrectAndNextLetter() {
-        // This function now just shows the "Correct!" message and resets for the next letter
-        self.showCorrectMessage = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            self.nextLetter()
         }
     }
 }
